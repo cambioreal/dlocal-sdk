@@ -181,6 +181,88 @@ public sealed record DlocalAddress
     public string? Number { get; init; }
 }
 
+/// <summary>
+/// Cotação entre moedas — resposta de <c>GET /currency-exchanges</c> (confirmado na doc oficial:
+/// <c>https://docs.dlocal.com/reference/get-an-exchange-rate</c>). Só tem <c>from</c>/<c>to</c>/<c>rate</c>
+/// — não existe parâmetro/campo <c>amount</c> neste endpoint (verificado em duas páginas da doc
+/// oficial, nenhuma menciona <c>amount</c>; o rate é o resultado, não um conversor de valor).
+/// </summary>
+public sealed record DlocalCurrencyExchange
+{
+    public string? From { get; init; }
+    public string? To { get; init; }
+    public decimal? Rate { get; init; }
+}
+
+/// <summary>
+/// Corpo de <c>POST /refunds</c> — confirmado em <c>https://docs.dlocal.com/reference/make-a-refund</c>.
+/// Único campo obrigatório é <see cref="PaymentId"/>; sem <see cref="Amount"/> a dLocal reembolsa o
+/// valor total do payment. Campos bancários são recomendados (não obrigatórios) para
+/// TICKET/BANK_TRANSFER.
+/// </summary>
+public sealed record CreateDlocalRefundRequest
+{
+    public required string PaymentId { get; init; }
+    public decimal? Amount { get; init; }
+    public string? Currency { get; init; }
+    public string? NotificationUrl { get; init; }
+    public string? CustomMerchantName { get; init; }
+    public string? Description { get; init; }
+    public string? OrderRefundId { get; init; }
+    public string? BeneficiaryName { get; init; }
+    public string? BeneficiaryLastname { get; init; }
+    public string? Bank { get; init; }
+    public string? BankCode { get; init; }
+    public string? BankAccount { get; init; }
+    public string? BankAccountType { get; init; }
+    public string? BankBranch { get; init; }
+    public string? BankBranchName { get; init; }
+    public string? DocumentType { get; init; }
+    public string? DocumentId { get; init; }
+    public string? Phone { get; init; }
+    public string? Email { get; init; }
+    public string? Address { get; init; }
+    public string? City { get; init; }
+
+    /// <summary>Split do reembolso entre uma ou mais contas — shape variável, exposto cru.</summary>
+    public JsonElement? Splits { get; init; }
+}
+
+/// <summary>
+/// Reembolso — resposta de POST/GET <c>/refunds</c>, campos confirmados em "The Refund Object"
+/// (<c>https://docs.dlocal.com/reference/the-refund-object</c>) e nos exemplos ao vivo de
+/// <c>make-a-refund</c>/<c>retrieve-a-refund</c>.
+/// </summary>
+public sealed record DlocalRefund
+{
+    public string? Id { get; init; }
+    public string? PaymentId { get; init; }
+    public string? OrderId { get; init; }
+    public string? CustomMerchantName { get; init; }
+    public decimal? Amount { get; init; }
+    public decimal? AmountRefunded { get; init; }
+    public string? Currency { get; init; }
+
+    /// <summary>Valores conhecidos: <c>SUCCESS</c> (visto ao vivo na doc), conjunto aberto ⇒ string.</summary>
+    public string? Status { get; init; }
+    public int? StatusCode { get; init; }
+    public string? StatusDetail { get; init; }
+
+    /// <summary>
+    /// Cru (<see langword="string"/>), não <see cref="DateTimeOffset"/>: o exemplo oficial devolve
+    /// offset sem dois-pontos (<c>+0000</c>), formato que o conversor padrão do
+    /// <c>System.Text.Json</c> rejeita (confirmado empiricamente) — mesmo risco latente, não
+    /// corrigido aqui, existe em <see cref="DlocalPayment.CreatedDate"/>.
+    /// </summary>
+    public string? CreatedDate { get; init; }
+    public string? NotificationUrl { get; init; }
+    public string? Description { get; init; }
+    public string? Bank { get; init; }
+    public string? BankAccount { get; init; }
+    public string? BankAccountType { get; init; }
+    public string? BankBranch { get; init; }
+}
+
 /// <summary>Pagamento — resposta de POST/GET <c>/payments</c>. Campos variáveis expostos crus.</summary>
 public sealed record DlocalPayment
 {
@@ -245,6 +327,38 @@ public sealed class DlocalClient
     public Task<DlocalPayment> CreatePaymentAsync(
         string product, CreateDlocalPaymentRequest request, CancellationToken cancellationToken = default) =>
         SendAsync<DlocalPayment>(product, HttpMethod.Post, "payments", request, cancellationToken);
+
+    /// <summary>
+    /// Cotação atual entre moedas. <c>GET /currency-exchanges?from=&amp;to=</c> — leitura. A dLocal
+    /// só aceita <c>from=USD</c> no momento (doc oficial); não há parâmetro <c>amount</c> neste
+    /// endpoint.
+    /// </summary>
+    public Task<DlocalCurrencyExchange> GetCurrencyExchangeAsync(
+        string product, string from, string to, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(from);
+        ArgumentException.ThrowIfNullOrWhiteSpace(to);
+
+        return SendAsync<DlocalCurrencyExchange>(
+            product,
+            HttpMethod.Get,
+            $"currency-exchanges?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}",
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Cria um reembolso de um payin existente. <c>POST /refunds</c>.
+    /// **FINANCIAL-WRITE** — não executar contra sandbox sem autorização explícita (goal §0.5).
+    /// </summary>
+    public Task<DlocalRefund> CreateRefundAsync(
+        string product, CreateDlocalRefundRequest request, CancellationToken cancellationToken = default) =>
+        SendAsync<DlocalRefund>(product, HttpMethod.Post, "refunds", request, cancellationToken);
+
+    /// <summary>Consulta um reembolso. <c>GET /refunds/{id}</c> — leitura.</summary>
+    public Task<DlocalRefund> GetRefundAsync(string product, string refundId, CancellationToken cancellationToken = default) =>
+        SendAsync<DlocalRefund>(
+            product, HttpMethod.Get, $"refunds/{Uri.EscapeDataString(refundId)}", body: null, cancellationToken);
 
     private async Task<TResponse> SendAsync<TResponse>(
         string product, HttpMethod method, string path, object? body, CancellationToken cancellationToken)
