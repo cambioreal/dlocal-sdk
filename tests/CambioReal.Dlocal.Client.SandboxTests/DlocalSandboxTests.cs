@@ -52,6 +52,43 @@ public sealed class DlocalSandboxTests
         output.WriteLine("GET payments/{fictício}: 404, code=4000 — acesso real ao recurso confirmado.");
     }
 
+    /// <summary>
+    /// READ — <c>GET /currency-exchanges?from=USD&amp;to=BRL</c>. A dLocal só aceita <c>from=USD</c>
+    /// (doc oficial); rota validada ao vivo com uma cotação real.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Sandbox")]
+    public async Task CurrencyExchangeReadLive()
+    {
+        using var provider = BuildServiceProvider();
+        var client = provider.GetRequiredService<DlocalClient>();
+
+        var quote = await client.GetCurrencyExchangeAsync(DlocalProducts.Checkout, "USD", "BRL");
+
+        quote.From.ShouldBe("USD");
+        quote.To.ShouldBe("BRL");
+        quote.Rate.ShouldNotBeNull();
+        output.WriteLine($"GET currency-exchanges?from=USD&to=BRL: 200, rate={quote.Rate} — HMAC validado.");
+    }
+
+    /// <summary>
+    /// READ — <c>GET /refunds/{id}</c> com id fictício. Sem criação de reembolso real (financial-write,
+    /// fora deste loop), o único probe seguro é o 404 de domínio, espelhando o probe de payments.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Sandbox")]
+    public async Task RefundGetWithFictitiousIdReturnsDomain404()
+    {
+        using var provider = BuildServiceProvider();
+        var client = provider.GetRequiredService<DlocalClient>();
+
+        var error = await Should.ThrowAsync<DlocalApiException>(
+            async () => await client.GetRefundAsync(DlocalProducts.Checkout, "REF-FICTICIO-000000"));
+
+        error.StatusCode.ShouldBe(System.Net.HttpStatusCode.NotFound);
+        output.WriteLine($"GET refunds/{{fictício}}: {(int)error.StatusCode}, code={error.ErrorCode} — acesso real ao recurso confirmado.");
+    }
+
     private static ServiceProvider BuildServiceProvider()
     {
         string Req(string name) =>

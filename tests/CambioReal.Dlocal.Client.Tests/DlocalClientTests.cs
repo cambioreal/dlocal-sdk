@@ -113,4 +113,80 @@ public sealed class DlocalClientTests
         error.ErrorCode.ShouldBe(4000);
         error.Message.ShouldContain("Payment not found");
     }
+
+    /// <summary>Path/query confirmados na doc oficial (<c>get-an-exchange-rate</c>): só <c>from</c>/<c>to</c>, sem <c>amount</c>.</summary>
+    [Fact]
+    public async Task GetCurrencyExchangeBuildsFromToQuery()
+    {
+        var (client, transport) = NewClient((HttpStatusCode.OK, """{"from":"USD","to":"BRL","rate":3.33}"""));
+
+        var quote = await client.GetCurrencyExchangeAsync(DlocalProducts.Checkout, "USD", "BRL");
+
+        quote.From.ShouldBe("USD");
+        quote.To.ShouldBe("BRL");
+        quote.Rate.ShouldBe(3.33m);
+
+        var request = transport.Requests.Single();
+        request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/currency-exchanges?from=USD&to=BRL");
+        request.Method.ShouldBe(HttpMethod.Get);
+    }
+
+    /// <summary>Exemplo oficial de <c>make-a-refund</c>: <c>POST /refunds</c> com <c>payment_id</c> obrigatório.</summary>
+    [Fact]
+    public async Task CreateRefundSerializesSnakeCaseAndSignsBody()
+    {
+        var (client, transport) = NewClient((HttpStatusCode.OK,
+            """{"id":"REF42342","payment_id":"PAY4334346343","status":"SUCCESS","amount":803.04,"currency":"BRL"}"""));
+
+        var refund = await client.CreateRefundAsync(DlocalProducts.Checkout, new CreateDlocalRefundRequest
+        {
+            PaymentId = "PAY4334346343",
+            Amount = 100m,
+            Currency = "USD",
+        });
+
+        refund.Id.ShouldBe("REF42342");
+        refund.Status.ShouldBe("SUCCESS");
+
+        var request = transport.Requests.Single();
+        request.Method.ShouldBe(HttpMethod.Post);
+        request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/refunds");
+        request.Body!.ShouldContain("\"payment_id\":\"PAY4334346343\"");
+        request.Body!.ShouldContain("\"amount\":100");
+        request.Body!.ShouldContain("\"currency\":\"USD\"");
+    }
+
+    /// <summary>Exemplo oficial de <c>retrieve-a-refund</c>: <c>GET /refunds/{id}</c>.</summary>
+    [Fact]
+    public async Task GetRefundParsesOfficialExampleShape()
+    {
+        var (client, transport) = NewClient((HttpStatusCode.OK,
+            """
+            {
+               "id": "REF42342",
+               "payment_id": "PAY4334346343",
+               "notification_url": "http://some.url",
+               "amount": 803.04,
+               "currency": "BRL",
+               "status": "SUCCESS",
+               "status_code": 200,
+               "status_detail": "The refund was paid",
+               "created_date": "2018-09-06T22:03:03.000+0000",
+               "amount_refunded": 803.04
+            }
+            """));
+
+        var refund = await client.GetRefundAsync(DlocalProducts.Checkout, "REF42342");
+
+        refund.Id.ShouldBe("REF42342");
+        refund.PaymentId.ShouldBe("PAY4334346343");
+        refund.Status.ShouldBe("SUCCESS");
+        refund.StatusCode.ShouldBe(200);
+        refund.AmountRefunded.ShouldBe(803.04m);
+        refund.CreatedDate.ShouldBe("2018-09-06T22:03:03.000+0000");
+
+        var request = transport.Requests.Single();
+        request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/refunds/REF42342");
+        request.Method.ShouldBe(HttpMethod.Get);
+    }
 }
