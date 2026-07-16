@@ -89,6 +89,27 @@ public sealed class DlocalSandboxTests
         output.WriteLine($"GET refunds/{{fictício}}: {(int)error.StatusCode}, code={error.ErrorCode} — acesso real ao recurso confirmado.");
     }
 
+    /// <summary>
+    /// READ — <c>GET /chargebacks/{id}</c> com id fictício. Mesmo probe seguro de payments/refunds
+    /// (404 de domínio); sem chargeback real (não há endpoint de simulação exercitado aqui —
+    /// <c>simulate-chargeback-sandbox-only</c> é uma escrita, fora deste probe). NÃO executado
+    /// nesta sessão (sem acesso a `pass cambio-real-v2/dlocal/demo-env` neste turno) — mantido
+    /// opt-in via <c>[Trait("Category", "Sandbox")]</c> para quando alguém rodar com as env vars.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Sandbox")]
+    public async Task ChargebackGetWithFictitiousIdReturnsDomain404()
+    {
+        using var provider = BuildServiceProvider();
+        var client = provider.GetRequiredService<DlocalClient>();
+
+        var error = await Should.ThrowAsync<DlocalApiException>(
+            async () => await client.GetChargebackAsync(DlocalProducts.Checkout, "CHAR-FICTICIO-000000"));
+
+        error.StatusCode.ShouldBe(System.Net.HttpStatusCode.NotFound);
+        output.WriteLine($"GET chargebacks/{{fictício}}: {(int)error.StatusCode}, code={error.ErrorCode} — acesso real ao recurso confirmado.");
+    }
+
     private static ServiceProvider BuildServiceProvider()
     {
         string Req(string name) =>

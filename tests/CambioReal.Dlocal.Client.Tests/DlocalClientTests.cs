@@ -156,6 +156,44 @@ public sealed class DlocalClientTests
         request.Body!.ShouldContain("\"currency\":\"USD\"");
     }
 
+    /// <summary>
+    /// Path/verbo confirmados em duas páginas da doc oficial (cancel-an-authorization e
+    /// cancel-alternative-payment): mesmo <c>POST /payments/{id}/cancel</c>, sem corpo.
+    /// </summary>
+    [Fact]
+    public async Task CancelPaymentSendsPostWithoutBodyAndSignsEmptyPayload()
+    {
+        var (client, transport) = NewClient((HttpStatusCode.OK,
+            """{"id":"PAY-1","status":"CANCELLED","status_code":"400","status_detail":"The payment was cancelled"}"""));
+
+        var payment = await client.CancelPaymentAsync(DlocalProducts.Checkout, "PAY-1");
+
+        payment.Status.ShouldBe("CANCELLED");
+
+        var request = transport.Requests.Single();
+        request.Method.ShouldBe(HttpMethod.Post);
+        request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/payments/PAY-1/cancel");
+        request.Body.ShouldBeNull();
+        request.ContentType.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A doc oficial de cancelamento devolve <c>"status_code": "400"</c> (string), diferente do
+    /// exemplo de <c>retrieve-a-refund</c> (<c>200</c>, número) — a tolerância
+    /// <c>JsonNumberHandling.AllowReadingFromString</c> precisa aceitar as duas formas em
+    /// <see cref="DlocalPayment.StatusCode"/>.
+    /// </summary>
+    [Fact]
+    public async Task CancelPaymentParsesQuotedStatusCodeFromOfficialExample()
+    {
+        var (client, _) = NewClient((HttpStatusCode.OK,
+            """{"id":"D-4-09f52dd0","amount":120,"currency":"USD","status":"CANCELLED","status_code":"400"}"""));
+
+        var payment = await client.CancelPaymentAsync(DlocalProducts.Checkout, "D-4-09f52dd0");
+
+        payment.StatusCode.ShouldBe(400);
+    }
+
     /// <summary>Exemplo oficial de <c>retrieve-a-refund</c>: <c>GET /refunds/{id}</c>.</summary>
     [Fact]
     public async Task GetRefundParsesOfficialExampleShape()
@@ -188,5 +226,53 @@ public sealed class DlocalClientTests
         var request = transport.Requests.Single();
         request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/refunds/REF42342");
         request.Method.ShouldBe(HttpMethod.Get);
+    }
+
+    /// <summary>
+    /// Exemplo oficial de <c>retrieve-a-chargeback</c> — inclui <c>"status_code": "200"</c> como
+    /// string (diferente do exemplo numérico de refunds), exercitando a mesma tolerância de
+    /// <see cref="CancelPaymentParsesQuotedStatusCodeFromOfficialExample"/>.
+    /// </summary>
+    [Fact]
+    public async Task GetChargebackParsesOfficialExampleShape()
+    {
+        var (client, transport) = NewClient((HttpStatusCode.OK,
+            """
+            {
+                "id": "CHAR42342",
+                "payment_id": "PAY245235",
+                "amount": 100.00,
+                "currency": "USD",
+                "status": "COMPLETED",
+                "status_code": "200",
+                "status_detail": "The chargeback was executed.",
+                "created_date": "2018-02-15T15:14:52-00:00"
+            }
+            """));
+
+        var chargeback = await client.GetChargebackAsync(DlocalProducts.Checkout, "CHAR42342");
+
+        chargeback.Id.ShouldBe("CHAR42342");
+        chargeback.PaymentId.ShouldBe("PAY245235");
+        chargeback.Status.ShouldBe("COMPLETED");
+        chargeback.StatusCode.ShouldBe(200);
+        chargeback.CreatedDate.ShouldBe("2018-02-15T15:14:52-00:00");
+
+        var request = transport.Requests.Single();
+        request.RequestUri!.ToString().ShouldBe("https://sandbox.dlocal.com/chargebacks/CHAR42342");
+        request.Method.ShouldBe(HttpMethod.Get);
+    }
+
+    /// <summary>Mesma forma de erro real validada em payments/refunds — 404 = code 4000.</summary>
+    [Fact]
+    public async Task ChargebackDomainErrorMapsNumericCode()
+    {
+        var (client, _) = NewClient((HttpStatusCode.NotFound, """{"code":4000,"message":"Chargeback not found"}"""));
+
+        var error = await Should.ThrowAsync<DlocalApiException>(
+            async () => await client.GetChargebackAsync(DlocalProducts.Checkout, "CHAR-X"));
+
+        error.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        error.ErrorCode.ShouldBe(4000);
     }
 }

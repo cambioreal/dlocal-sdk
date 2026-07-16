@@ -276,6 +276,18 @@ public sealed record DlocalPayment
     public string? Status { get; init; }
 
     public string? StatusDetail { get; init; }
+
+    /// <summary>
+    /// Cru <see langword="int"/>, mas o serializer aceita string ou número (ver
+    /// <see cref="JsonNumberHandling.AllowReadingFromString"/>, configurado em
+    /// <c>DlocalClient.CreateJson</c>): os exemplos oficiais de
+    /// <c>cancel-an-authorization</c>/<c>cancel-alternative-payment</c>
+    /// (<c>https://docs.dlocal.com/reference/cancel-an-authorization</c>) devolvem
+    /// <c>"status_code": "400"</c> — string, não número — divergindo do exemplo de
+    /// <c>retrieve-a-refund</c> (<c>"status_code": 200</c>, numérico). Descoberto ao implementar
+    /// <c>DlocalClient.CancelPaymentAsync</c>; sem essa tolerância, um cancelamento real quebraria
+    /// a desserialização.
+    /// </summary>
     public int? StatusCode { get; init; }
     public string? OrderId { get; init; }
     public JsonElement? ThreeDsecure { get; init; }
@@ -283,6 +295,35 @@ public sealed record DlocalPayment
     public JsonElement? Wallet { get; init; }
     public JsonElement? QrCode { get; init; }
     public DateTimeOffset? CreatedDate { get; init; }
+}
+
+/// <summary>
+/// Chargeback — resposta de <c>GET /chargebacks/{id}</c>, confirmada em
+/// <c>https://docs.dlocal.com/reference/retrieve-a-chargeback</c> (exemplo oficial: <c>id</c>,
+/// <c>payment_id</c>, <c>amount</c>, <c>currency</c>, <c>status</c>, <c>status_code</c>,
+/// <c>status_detail</c>, <c>created_date</c>).
+/// </summary>
+public sealed record DlocalChargeback
+{
+    public string? Id { get; init; }
+    public string? PaymentId { get; init; }
+    public decimal? Amount { get; init; }
+    public string? Currency { get; init; }
+
+    /// <summary>Valores conhecidos: <c>PENDING</c> (simulação sandbox), <c>COMPLETED</c> (exemplo oficial) — conjunto aberto.</summary>
+    public string? Status { get; init; }
+
+    /// <summary>Ver nota em <see cref="DlocalPayment.StatusCode"/> — o exemplo oficial devolve <c>"200"</c> (string), tolerado pelo mesmo <see cref="JsonNumberHandling.AllowReadingFromString"/>.</summary>
+    public int? StatusCode { get; init; }
+    public string? StatusDetail { get; init; }
+
+    /// <summary>
+    /// Cru (<see langword="string"/>), não <see cref="DateTimeOffset"/> — mesma cautela aplicada a
+    /// <see cref="DlocalRefund.CreatedDate"/>: o formato de offset da dLocal varia entre recursos
+    /// (aqui o exemplo oficial usa <c>-00:00</c>, com dois-pontos, mas não exercitado ao vivo com
+    /// um chargeback real nesta linha de trabalho, então não confirmado empiricamente).
+    /// </summary>
+    public string? CreatedDate { get; init; }
 }
 
 /// <summary>
@@ -329,6 +370,23 @@ public sealed class DlocalClient
         SendAsync<DlocalPayment>(product, HttpMethod.Post, "payments", request, cancellationToken);
 
     /// <summary>
+    /// Cancela um pagamento — mesmo path oficial (<c>POST /payments/{id}/cancel</c>) cobre dois
+    /// cenários confirmados em páginas distintas da doc oficial: uma autorização de cartão ainda
+    /// não capturada (<c>https://docs.dlocal.com/reference/cancel-an-authorization</c>) ou um
+    /// payment pendente de método alternativo/APM — PIX, boleto etc.
+    /// (<c>https://docs.dlocal.com/reference/cancel-alternative-payment</c>). Sem corpo de
+    /// requisição (confirmado nas duas páginas); resposta é o payment com <c>status: CANCELLED</c>.
+    /// **WRITE** — muta o estado real de um payment existente (não move fundos novos como
+    /// <see cref="CreatePaymentAsync"/>/<see cref="CreateRefundAsync"/>, mas ainda assim não é
+    /// idempotente/sem-efeito). Por instrução desta tarefa, tratado como write e NUNCA executado
+    /// contra sandbox — contrato validado só por espelhamento de schema (mock), goal §0.5.
+    /// </summary>
+    public Task<DlocalPayment> CancelPaymentAsync(
+        string product, string paymentId, CancellationToken cancellationToken = default) =>
+        SendAsync<DlocalPayment>(
+            product, HttpMethod.Post, $"payments/{Uri.EscapeDataString(paymentId)}/cancel", body: null, cancellationToken);
+
+    /// <summary>
     /// Cotação atual entre moedas. <c>GET /currency-exchanges?from=&amp;to=</c> — leitura. A dLocal
     /// só aceita <c>from=USD</c> no momento (doc oficial); não há parâmetro <c>amount</c> neste
     /// endpoint.
@@ -359,6 +417,16 @@ public sealed class DlocalClient
     public Task<DlocalRefund> GetRefundAsync(string product, string refundId, CancellationToken cancellationToken = default) =>
         SendAsync<DlocalRefund>(
             product, HttpMethod.Get, $"refunds/{Uri.EscapeDataString(refundId)}", body: null, cancellationToken);
+
+    /// <summary>
+    /// Consulta um chargeback. <c>GET /chargebacks/{id}</c> — leitura, confirmado em
+    /// <c>https://docs.dlocal.com/reference/retrieve-a-chargeback</c>. A dLocal não documenta um
+    /// endpoint de listagem de chargebacks (não localizado em <c>docs.dlocal.com/reference</c> nem
+    /// no <c>llms.txt</c>) — só a consulta individual por id existe publicamente.
+    /// </summary>
+    public Task<DlocalChargeback> GetChargebackAsync(string product, string chargebackId, CancellationToken cancellationToken = default) =>
+        SendAsync<DlocalChargeback>(
+            product, HttpMethod.Get, $"chargebacks/{Uri.EscapeDataString(chargebackId)}", body: null, cancellationToken);
 
     private async Task<TResponse> SendAsync<TResponse>(
         string product, HttpMethod method, string path, object? body, CancellationToken cancellationToken)
@@ -450,6 +518,14 @@ public sealed class DlocalClient
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+
+            // A dLocal é inconsistente sobre o tipo de `status_code` entre recursos: numérico em
+            // "retrieve-a-refund" (`"status_code": 200`), mas string nos exemplos oficiais de
+            // "cancel-an-authorization"/"cancel-alternative-payment"/"retrieve-a-chargeback"
+            // (`"status_code": "400"`/`"200"`). Descoberto ao implementar cancel/chargeback
+            // (2026-07-16) — sem essa tolerância, `int?` quebraria a desserialização de uma
+            // resposta real. Aceita as duas formas; não afeta os campos já numéricos.
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
         };
 
         json.MakeReadOnly(populateMissingResolver: true);

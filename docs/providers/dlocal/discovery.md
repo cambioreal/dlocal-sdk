@@ -1,11 +1,13 @@
 # dLocal — Discovery
 
-Status: descoberta e SDK concluídos (2026-07-15). **Pré-condição do goal satisfeita**: os probes
-de leitura não financeiros POR PRODUTO foram definidos e executados ao vivo ANTES do código —
+Status: descoberta e SDK concluídos (2026-07-15; gaps P2 — cancelamento e chargebacks —
+adicionados em 2026-07-16, SDK 0.3.0). **Pré-condição do goal satisfeita**: os probes de leitura
+não financeiros POR PRODUTO foram definidos e executados ao vivo ANTES do código —
 `GET /payments-methods?country=BR` em cada MID + `GET /payments/{fictício}` (404 autenticado).
 Provider order position: **9 of 9**.
 Verified: 2026-07-15, contra `pass cambio-real-v2/dlocal/demo-env` no sandbox vivo
-(`sandbox.dlocal.com`) + legado `cerebro` (read-only).
+(`sandbox.dlocal.com`) + legado `cerebro` (read-only). Cancelamento/chargebacks (2026-07-16)
+validados só por contrato/mock — sem acesso a `pass` neste turno (ver §5.9).
 
 ## 1. Perfil e credenciais por produto
 
@@ -41,9 +43,12 @@ Verified: 2026-07-15, contra `pass cambio-real-v2/dlocal/demo-env` no sandbox vi
 | 4 | `GET /currency-exchanges` | `GetCurrencyExchangeAsync(product, from, to)` | read (cotação; dLocal só aceita `from=USD` no momento) | ✅ vivo (2026-07-15, checkout) |
 | 5 | `POST /refunds` | `CreateRefundAsync(product, req)` | **financial-write** (reembolso de payin) | 🔴 contrato-only (§0.5), nunca exercitado |
 | 6 | `GET /refunds/{id}` | `GetRefundAsync(product, id)` | read (consulta reembolso) | ✅ vivo (404 de domínio, id fictício — sem reembolso real criado) |
+| 7 | `POST /payments/{id}/cancel` | `CancelPaymentAsync(product, id)` | **write** (cancela autorização de cartão não capturada OU payment pendente de APM — mesmo path oficial para os dois cenários) | 🔴 contrato-only (§0.5), nunca exercitado |
+| 8 | `GET /chargebacks/{id}` | `GetChargebackAsync(product, id)` | read (consulta chargeback; dLocal não documenta endpoint de listagem) | ⚪ contrato-only nesta sessão (mock verde; sandbox opt-in escrito mas não executado — sem acesso a `pass` neste turno) |
 | — | cashout (`api_curl/cashout_api`, legado antigo) | **fora do escopo v1** (decisão) | financial-write | ⚪ payout DLocal segue como gap conhecido do PROVIDER-MAP |
 | — | webhooks (notification_url) | fora do gateway (decisão; legado consome direto) | — | ⚪ |
-| — | chargebacks (`GET /chargebacks/{id}`) | não implementado | read | ⚪ gap remanescente (fora deste incremento) |
+| — | `POST /secure_payments` (PAN/CVV cru) | não implementado | financial-write | ⚪ deliberadamente fora — decisão de PCI/produto |
+| — | `POST /payments/wallet/{token}/cancel` | não implementado | write | ⚪ deliberadamente fora — nicho |
 
 ## 5. Decisões e lacunas
 
@@ -51,8 +56,28 @@ Verified: 2026-07-15, contra `pass cambio-real-v2/dlocal/demo-env` no sandbox vi
    PROVIDER-MAP já registra payout DLocal como gap; incremento futuro com discovery próprio.
 2. ~~Refunds/chargebacks fora do v1~~ — **refunds implementado em 2026-07-15** (`GET
    /currency-exchanges`, `POST /refunds`, `GET /refunds/{id}`, gaps P0 do
-   `provider-protocol/docs/gateways/coverage/dlocal.md`). Chargebacks (`GET /chargebacks/{id}`)
-   segue fora do v1 — sem uso confirmado, não endereçado neste incremento.
+   `provider-protocol/docs/gateways/coverage/dlocal.md`). **Cancelamento e chargebacks
+   implementados em 2026-07-16** (`POST /payments/{id}/cancel`, `GET /chargebacks/{id}`, gaps P2
+   do mesmo coverage doc). `secure_payments` (PAN/CVV cru) e cancelamento de token de wallet
+   seguem deliberadamente fora — não endereçados neste incremento (PCI/produto e nicho,
+   respectivamente).
+7. **Inconsistência de tipo em `status_code` entre recursos dLocal** — descoberta ao implementar
+   cancelamento/chargebacks (2026-07-16): os exemplos oficiais de `cancel-an-authorization`,
+   `cancel-alternative-payment` e `retrieve-a-chargeback` devolvem `"status_code"` como **string**
+   (`"400"`/`"200"`), enquanto o exemplo de `retrieve-a-refund` devolve **número** (`200`). O SDK
+   agora usa `JsonNumberHandling.AllowReadingFromString` globalmente (`DlocalClient.CreateJson`)
+   para tolerar as duas formas em todo `int? StatusCode` (`DlocalPayment`, `DlocalRefund`,
+   `DlocalChargeback`) — sem essa mudança, um cancelamento ou chargeback real quebraria a
+   desserialização. Não afeta campos numéricos que já eram consistentemente números
+   (`amount`, `rate`).
+8. **Chargebacks não têm endpoint de listagem público** — confirmado via `docs.dlocal.com/llms.txt`
+   (só `retrieve-a-chargeback`, `retrieve-a-chargeback-status`, `chargeback-asynchronous-notification`,
+   `simulate-chargeback-sandbox-only` existem); só a consulta individual por id foi implementada.
+9. **Teste sandbox de chargeback (`ChargebackGetWithFictitiousIdReturnsDomain404`) escrito mas NÃO
+   executado nesta sessão** — sem acesso a `pass cambio-real-v2/dlocal/demo-env` neste turno (regra
+   "nunca `pass show` um segredo"). Mock/contrato (13 unit + 13 contrato de gateway, todos verdes)
+   cobrem o resto. Fica opt-in via `[Trait("Category","Sandbox")]` para quando alguém rodar com as
+   env vars.
 3. `additional_risk_data` exposto cru (o legado envia um bloco grande de risco no PIX — política
    de consumidor).
 4. 6 MIDs mencionados no PROVIDER-MAP vs 4 no pass — os 4 disponíveis foram validados; MIDs

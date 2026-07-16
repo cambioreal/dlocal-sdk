@@ -4,7 +4,7 @@
     <RootNamespace>CambioReal.Dlocal</RootNamespace>
     <AssemblyName>CambioReal.Dlocal.Client</AssemblyName>
     <PackageId>CambioReal.Dlocal.Client</PackageId>
-    <Description>Cliente .NET tipado para a dLocal Payins API v2.1 (payments PIX/Boleto/cartão/TED, payment methods) com assinatura V2-HMAC-SHA256 e credenciais por produto (checkout/card/remittance/payout) — mesmo padrão dos SDKs cambioreal.</Description>
+    <Description>Cliente .NET tipado para a dLocal Payins API v2.1 (payments PIX/Boleto/cartão/TED, cancelamento, payment methods, cotação de câmbio, reembolsos, chargebacks) com assinatura V2-HMAC-SHA256 e credenciais por produto (checkout/card/remittance/payout) — mesmo padrão dos SDKs cambioreal.</Description>
     <IsPackable>true</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
