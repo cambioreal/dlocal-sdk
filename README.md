@@ -23,3 +23,20 @@ nesta versão: `status_code` vem como string nos exemplos oficiais de cancelamen
 (`JsonNumberHandling.AllowReadingFromString`).
 
 Secrets: `pass cambio-real-v2/dlocal/demo-env`. Discovery: `docs/providers/dlocal/discovery.md`.
+
+## Instalação e uso
+
+Pacote no GitHub Packages da org `cambioreal` (feed configurado no `NuGet.config` do repo consumidor):
+
+```bash
+dotnet add package CambioReal.Dlocal.Client
+```
+
+```csharp
+// Registro via DI — credenciais vêm de config segura (env/Secret/pass), nunca versionadas.
+builder.Services.AddDlocalClient(builder.Configuration.GetSection(DlocalOptions.SectionName));
+
+// ...injete CambioReal.Dlocal.DlocalClient onde precisar.
+```
+
+Também há a sobrecarga `AddDlocalClient(Action<DlocalOptions>)` para configuração inline.
