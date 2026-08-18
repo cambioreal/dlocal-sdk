@@ -553,10 +553,18 @@ public static class DlocalServiceCollectionExtensions
         services.AddOptions<DlocalOptions>().Validate(
             options =>
             {
-                options.Validate();
-                return true;
+                try
+                {
+                    options.Validate();
+                    return true;
+                }
+                catch (InvalidOperationException)
+                {
+                    return false;
+                }
             },
-            "A configuração do DlocalOptions é inválida.");
+            "A configuração do DlocalOptions é inválida.")
+            .ValidateOnStart();
 
         services.TryAddSingleton(TimeProvider.System);
 
