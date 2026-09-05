@@ -1,0 +1,7 @@
+schema_version: repository-contract/v1
+repository_id: 5fd940b7-4edc-4461-9adf-bb6c420dcf06
+identity:
+  remotes:
+  - github.com/cambioreal/dlocal-sdk
+capabilities:
+  manifest: null
